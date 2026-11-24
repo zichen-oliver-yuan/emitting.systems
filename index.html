@@ -44,8 +44,8 @@
     // Smoke from the "t" in "systems": square units leave the tip of the stem,
     // round off as they rise, fuse into larger clusters, and pool at the top.
     const FILL_SECONDS = 300;  // time for the cloud to reach its lowest point
-    const RISE_SECONDS = 12;   // roughly how long a unit takes to reach the top
-    const RATE = 8;            // units emitted per second
+    const RISE_SECONDS = 26;   // roughly how long a unit takes to reach the top
+    const RATE = 5;            // units emitted per second
     const BIN = 16;            // px width of one column of the cloud's lower edge
     const STEP = 1 / 60;
 
@@ -113,7 +113,7 @@
       const s0 = 0.05 * fs;
       parts.push({
         x: tip.x + (Math.random() - 0.5) * 0.09 * fs, y: tip.y,
-        vx: (Math.random() - 0.5) * 0.08 * fs, vy: -0.25 * fs,
+        vx: (Math.random() - 0.5) * 0.08 * fs, vy: -0.08 * fs,
         s: s0, s0, age: 0, mass: 1, off: 0, settled: false,
         k: 0.8 + Math.random() * 0.45, grow: 3.5 + Math.random() * 3, ph: Math.random() * 6.283
       });
@@ -162,11 +162,13 @@
           if (p.s < 0.6) p.dead = true;
           continue;
         }
-        const targetVy = -(tip.y / RISE_SECONDS) * p.k * Math.min(1, 0.25 + p.age / 3);
+        const targetVy = -(tip.y / RISE_SECONDS) * p.k * Math.min(1, 0.3 + p.age / 6);
         p.vy += (targetVy - p.vy) * dt * 1.5;
         const lift = Math.min(1, (tip.y - p.y) / (3 * fs));
-        const wind = (Math.sin(p.y / fs * 0.9 + time * 0.5 + p.ph) * 0.25 + Math.sin(time * 0.13) * 0.3 + Math.sin(time * 0.041 + 1) * 0.25) * fs * lift;
-        p.vx += (wind - p.vx) * dt * 0.8;
+        // A light prevailing breeze to the right that swells and eases, plus a small meander.
+        const breeze = (tip.y / RISE_SECONDS) * (0.42 + 0.2 * Math.sin(time * 0.11) + 0.1 * Math.sin(time * 0.37 + 1));
+        const wind = (breeze + Math.sin(p.y / fs * 0.9 + time * 0.3 + p.ph) * 0.06 * fs) * lift;
+        p.vx += (wind - p.vx) * dt * 0.5;
         p.x += p.vx * dt; p.y += p.vy * dt;
         if (p.x < -M) { p.x = -M; p.vx = Math.abs(p.vx); }
         if (p.x > W + M) { p.x = W + M; p.vx = -Math.abs(p.vx); }
