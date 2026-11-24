@@ -28,11 +28,22 @@
     html { height: 100%; overflow: hidden; overscroll-behavior: none; background: #0059ff; }
     body { position: fixed; inset: 0; overflow: hidden; margin: 0; padding: 1rem; font: 15px/1.6 "Rag", Arial, Helvetica, sans-serif; color: #ffffff; background: #0059ff; line-height: 1.25;}
     h1 { font-weight: normal; font-size: 1.2rem; }
+    .chimney { position: relative; display: inline-block; }
+    .chimney i { position: absolute; left: 0.13em; top: 0.2em; width: 0.13em; height: 0.13em; margin: -0.065em; border-radius: 50%; background: #ffffff; opacity: 0; pointer-events: none; filter: blur(0.02em); animation: emit 3.6s linear infinite; }
+    .chimney i:nth-child(2) { animation-delay: -1.2s; }
+    .chimney i:nth-child(3) { animation-delay: -2.4s; }
+    @keyframes emit {
+      0% { transform: translate(0, 0) scale(0.3); opacity: 0; }
+      15% { opacity: 0.9; }
+      50% { transform: translate(0.08em, -0.3em) scale(1); opacity: 0.7; }
+      100% { transform: translate(0.3em, -0.62em) scale(1.9); opacity: 0; }
+    }
+    @media (prefers-reduced-motion: reduce) { .chimney i { animation: none; } }
     ::selection { background: #d6006f; color: #ffffff; }
   </style>
 </head>
 <body>
-  <p>emitting.systems is a collective conducting experiments with and in response to emerging and legacy tools.</p>
+  <p>emitting.sys<span class="chimney">t<i aria-hidden="true"></i><i aria-hidden="true"></i><i aria-hidden="true"></i></span>ems is a collective conducting experiments with and in response to emerging and legacy tools.</p>
   <p>our curiosity lies in digital literacy, noise-making, computational imageries, and electronics.</p>
 </body>
 </html>
