@@ -26,24 +26,219 @@
     @font-face { font-family: "Rag"; src: url("fonts/Rag-Bold.woff2") format("woff2"); font-weight: 700; font-style: normal; font-display: swap; }
     @font-face { font-family: "Rag"; src: url("fonts/Rag-BoldItalic.woff2") format("woff2"); font-weight: 700; font-style: italic; font-display: swap; }
     html { height: 100%; overflow: hidden; overscroll-behavior: none; background: #0059ff; }
-    body { position: fixed; inset: 0; overflow: hidden; margin: 0; padding: 1rem; font: 15px/1.6 "Rag", Arial, Helvetica, sans-serif; color: #ffffff; background: #0059ff; line-height: 1.25;}
+    body { position: fixed; inset: 0; overflow: hidden; margin: 0; padding: max(1rem, 0.4em); box-sizing: border-box; display: flex; flex-direction: column; justify-content: flex-end; font: clamp(18px, 4vw, 64px)/1.2 "Rag", Arial, Helvetica, sans-serif; color: #ffffff; background: #0059ff; }
+    p { position: relative; z-index: 1; margin: 0.6em 0 0; }
     h1 { font-weight: normal; font-size: 1.2rem; }
-    .chimney { position: relative; display: inline-block; }
-    .chimney i { position: absolute; left: 0.13em; top: 0.2em; width: 0.13em; height: 0.13em; margin: -0.065em; border-radius: 50%; background: #ffffff; opacity: 0; pointer-events: none; filter: blur(0.02em); animation: emit 3.6s linear infinite; }
-    .chimney i:nth-child(2) { animation-delay: -1.2s; }
-    .chimney i:nth-child(3) { animation-delay: -2.4s; }
-    @keyframes emit {
-      0% { transform: translate(0, 0) scale(0.3); opacity: 0; }
-      15% { opacity: 0.9; }
-      50% { transform: translate(0.08em, -0.3em) scale(1); opacity: 0.7; }
-      100% { transform: translate(0.3em, -0.62em) scale(1.9); opacity: 0; }
-    }
-    @media (prefers-reduced-motion: reduce) { .chimney i { animation: none; } }
+    canvas { position: absolute; pointer-events: none; }
+    #goo { mix-blend-mode: screen; }
     ::selection { background: #d6006f; color: #ffffff; }
   </style>
 </head>
 <body>
-  <p>emitting.sys<span class="chimney">t<i aria-hidden="true"></i><i aria-hidden="true"></i><i aria-hidden="true"></i></span>ems is a collective conducting experiments with and in response to emerging and legacy tools.</p>
+  <canvas id="goo" aria-hidden="true"></canvas>
+  <canvas id="crisp" aria-hidden="true"></canvas>
+  <p>emitting.sys<span class="chimney">t</span>ems is a collective conducting experiments with and in response to emerging and legacy tools.</p>
   <p>our curiosity lies in digital literacy, noise-making, computational imageries, and electronics.</p>
+  <script>
+  (() => {
+    // Smoke from the "t" in "systems": square units leave the tip of the stem,
+    // round off as they rise, fuse into larger clusters, and pool at the top.
+    const FILL_SECONDS = 300;  // time for the cloud to reach its lowest point
+    const RISE_SECONDS = 12;   // roughly how long a unit takes to reach the top
+    const RATE = 8;            // units emitted per second
+    const BIN = 16;            // px width of one column of the cloud's lower edge
+    const STEP = 1 / 60;
+
+    const goo = document.getElementById('goo');
+    const crisp = document.getElementById('crisp');
+    const anchor = document.querySelector('.chimney');
+    const layers = [goo.getContext('2d'), crisp.getContext('2d')];
+    const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    let W = 0, H = 0, fs = 0, M = 0, dpr = 1, capY = 0, unitVol = 0;
+    let tip = { x: 0, y: 0 };
+    let heights = new Float32Array(0), scratch = new Float32Array(0);
+    let parts = [], time = 0, emitDebt = 0;
+
+    function layout() {
+      const old = { W, fs, tip, capY, heights };
+      W = innerWidth; H = innerHeight;
+      fs = Math.max(18, Math.min(96, Math.sqrt(W * H / 500)));
+      document.body.style.fontSize = fs + 'px';
+      const r = anchor.getBoundingClientRect();
+      tip = { x: r.left + 0.135 * fs, y: r.top + 0.27 * fs };
+      M = Math.ceil(fs);
+      dpr = Math.min(window.devicePixelRatio || 1, 2);
+      capY = Math.max(0, tip.y - 2.5 * fs);
+      for (const c of [goo, crisp]) {
+        c.width = Math.round((W + 2 * M) * dpr);
+        c.height = Math.round((H + 2 * M) * dpr);
+        c.style.left = c.style.top = -M + 'px';
+        c.style.width = W + 2 * M + 'px';
+        c.style.height = H + 2 * M + 'px';
+      }
+      goo.style.filter = `blur(${Math.max(3, fs * 0.1).toFixed(1)}px) contrast(30)`;
+      const n = Math.ceil((W + 2 * M) / BIN) + 1;
+      heights = new Float32Array(n);
+      scratch = new Float32Array(n);
+      unitVol = capY * (W + 2 * M) / (RATE * FILL_SECONDS);
+      if (old.fs) {
+        // Keep the existing cloud and smoke through a resize.
+        const k = old.capY ? capY / old.capY : 0, on = old.heights.length;
+        for (let i = 0; i < n; i++) heights[i] = old.heights[Math.min(on - 1, Math.round(i * (on - 1) / (n - 1)))] * k;
+        const sc = fs / old.fs;
+        for (const p of parts) {
+          if (p.settled) p.x *= W / old.W;
+          else { p.x = tip.x + (p.x - old.tip.x) * sc; p.y = tip.y + (p.y - old.tip.y) * sc; }
+          p.s *= sc; p.s0 *= sc; p.vx *= sc; p.vy *= sc; p.off *= sc;
+        }
+      }
+    }
+
+    function heightAt(x) {
+      const f = Math.max(0, Math.min(heights.length - 1.001, (x + M) / BIN));
+      const i = f | 0, t = f - i;
+      return heights[i] * (1 - t) + heights[i + 1] * t;
+    }
+
+    function deposit(x, vol, spread) {
+      const a = Math.max(0, Math.floor((x - spread + M) / BIN));
+      const b = Math.min(heights.length - 1, Math.ceil((x + spread + M) / BIN));
+      let sum = 0;
+      for (let i = a; i <= b; i++) sum += Math.max(0.05, 1 - Math.abs(i * BIN - M - x) / spread);
+      for (let i = a; i <= b; i++) heights[i] += vol * Math.max(0.05, 1 - Math.abs(i * BIN - M - x) / spread) / (sum * BIN);
+    }
+
+    function spawn() {
+      const s0 = 0.05 * fs;
+      parts.push({
+        x: tip.x + (Math.random() - 0.5) * 0.09 * fs, y: tip.y,
+        vx: (Math.random() - 0.5) * 0.08 * fs, vy: -0.25 * fs,
+        s: s0, s0, age: 0, mass: 1, off: 0, settled: false,
+        k: 0.8 + Math.random() * 0.45, grow: 3.5 + Math.random() * 3, ph: Math.random() * 6.283
+      });
+    }
+
+    function step(dt) {
+      time += dt;
+      emitDebt += RATE * dt * (1 + 0.9 * Math.sin(time * 2.1) * Math.sin(time * 0.7));
+      while (emitDebt >= 1) { emitDebt -= 1; spawn(); }
+
+      let total = 0;
+      for (let i = 0; i < heights.length; i++) total += heights[i];
+      const full = total / heights.length >= capY;
+
+      // Nearby rising units pull together and, once overlapping, become one.
+      for (let i = 0; i < parts.length; i++) {
+        const a = parts[i];
+        if (a.settled || a.dead || a.age < 1.5) continue;
+        for (let j = i + 1; j < parts.length; j++) {
+          const b = parts[j];
+          if (b.settled || b.dead || b.age < 1.5) continue;
+          const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 0.001, reach = (a.s + b.s) * 2, big = Math.max(a.s, b.s);
+          if (d > reach) continue;
+          if (d < 0.25 * big && a.age > 3 && b.age > 3 && a.mass + b.mass <= 12) {
+            const big = a.mass >= b.mass ? a : b, small = big === a ? b : a, m = a.mass + b.mass;
+            big.x = (a.x * a.mass + b.x * b.mass) / m; big.y = (a.y * a.mass + b.y * b.mass) / m;
+            big.vx = (a.vx * a.mass + b.vx * b.mass) / m; big.vy = (a.vy * a.mass + b.vy * b.mass) / m;
+            big.mass = m; small.dead = true;
+            if (small === a) break;
+            continue;
+          }
+          const f = (d < 0.8 * big ? -0.6 : 1 - d / reach) * dt * 0.22 * fs / d, m = a.mass + b.mass;
+          a.x += dx * f * b.mass / m; a.y += dy * f * b.mass / m;
+          b.x -= dx * f * a.mass / m; b.y -= dy * f * a.mass / m;
+        }
+      }
+
+      for (const p of parts) {
+        if (p.dead) continue;
+        p.age += dt;
+        if (p.settled) {
+          p.x += p.vx * dt;
+          p.off += (-0.2 * p.s - p.off) * dt * 0.3;
+          p.y = heightAt(p.x) + p.off;
+          p.s *= 1 - 0.07 * dt;
+          if (p.s < 0.6) p.dead = true;
+          continue;
+        }
+        const targetVy = -(tip.y / RISE_SECONDS) * p.k * Math.min(1, 0.25 + p.age / 3);
+        p.vy += (targetVy - p.vy) * dt * 1.5;
+        const lift = Math.min(1, (tip.y - p.y) / (3 * fs));
+        const wind = (Math.sin(p.y / fs * 0.9 + time * 0.5 + p.ph) * 0.25 + Math.sin(time * 0.13) * 0.3 + Math.sin(time * 0.041 + 1) * 0.25) * fs * lift;
+        p.vx += (wind - p.vx) * dt * 0.8;
+        p.x += p.vx * dt; p.y += p.vy * dt;
+        if (p.x < -M) { p.x = -M; p.vx = Math.abs(p.vx); }
+        if (p.x > W + M) { p.x = W + M; p.vx = -Math.abs(p.vx); }
+        const target = Math.min(0.8 * fs, p.s0 * Math.sqrt(p.mass) * (1 + p.grow * Math.pow(Math.min(1, p.age / RISE_SECONDS), 0.9)));
+        p.s += (target - p.s) * dt * 2;
+        if (p.y - p.s * 0.6 <= heightAt(p.x)) {
+          p.settled = true;
+          p.off = p.y - heightAt(p.x);
+          p.vx = (Math.random() - 0.5) * 0.3 * fs;
+          if (!full) deposit(p.x, p.mass * unitVol, p.s * 3);
+        }
+      }
+      parts = parts.filter(p => !p.dead);
+
+      // The pooled gas levels out sideways along the top.
+      const n = heights.length;
+      for (let pass = 0; pass < 3; pass++) {
+        for (let i = 0; i < n; i++) {
+          const l = heights[i ? i - 1 : 0], r = heights[i < n - 1 ? i + 1 : n - 1];
+          scratch[i] = heights[i] + 0.2 * (l + r - 2 * heights[i]);
+        }
+        const t = heights; heights = scratch; scratch = t;
+      }
+    }
+
+    function shape(ctx, p) {
+      const round = Math.max(0, Math.min(1, (p.age - 1) / (RISE_SECONDS * 0.45)));
+      const r = p.s * round * round * (3 - 2 * round), s = p.s, x = p.x, y = p.y;
+      ctx.moveTo(x - s + r, y - s);
+      ctx.arcTo(x + s, y - s, x + s, y + s, r);
+      ctx.arcTo(x + s, y + s, x - s, y + s, r);
+      ctx.arcTo(x - s, y + s, x - s, y - s, r);
+      ctx.arcTo(x - s, y - s, x + s, y - s, r);
+      ctx.closePath();
+    }
+
+    function render() {
+      layers.forEach((ctx, layer) => {
+        ctx.setTransform(dpr, 0, 0, dpr, M * dpr, M * dpr);
+        if (layer === 0) { ctx.fillStyle = '#000'; ctx.fillRect(-M, -M, W + 2 * M, H + 2 * M); }
+        else ctx.clearRect(-M, -M, W + 2 * M, H + 2 * M);
+        ctx.fillStyle = '#fff';
+        ctx.beginPath();
+        ctx.moveTo(-M, -M);
+        for (let i = 0; i < heights.length; i++) {
+          const x = i * BIN - M, h = heights[i];
+          ctx.lineTo(x, h + Math.sin(x * 0.011 + time * 0.4) * Math.min(h * 0.3, 0.12 * fs));
+        }
+        ctx.lineTo(W + M, -M);
+        ctx.closePath();
+        for (const p of parts) shape(ctx, p);
+        ctx.fill();
+      });
+    }
+
+    layout();
+    addEventListener('resize', () => { layout(); render(); });
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { layout(); render(); });
+
+    if (reduce) {
+      for (let i = 0; i < 40 * 60; i++) step(STEP);
+      render();
+      return;
+    }
+    let last = performance.now(), acc = 0;
+    requestAnimationFrame(function frame(now) {
+      acc += Math.min(0.05, (now - last) / 1000); last = now;
+      while (acc >= STEP) { step(STEP); acc -= STEP; }
+      render();
+      requestAnimationFrame(frame);
+    });
+  })();
+  </script>
 </body>
 </html>
